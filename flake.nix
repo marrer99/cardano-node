@@ -2,100 +2,43 @@
   description = "Cardano Node";
 
   inputs = {
-    haskell-nix.url = "github:input-output-hk/haskell.nix";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    haskellNix.url = "github:input-output-hk/haskell.nix";
+    # Would rather use iohkNix/nixpkgs here but we may need to add a flake there first
+    nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     utils.url = "github:numtide/flake-utils";
+    iohkNix = {
+      url = "github:input-output-hk/iohk-nix";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, utils, haskell-nix, ... }:
-    (utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ] (system:
+  outputs = { self, nixpkgs, utils, haskellNix, iohkNix }:
+    utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ] (system:
       let
-        legacyPackages = import ./nix {
-          inherit sources system nixpkgs iohkNix;
-          haskellNix = haskell-nix.legacyPackages.${system};
-          gitrev = self.rev or "dirty";
-        };
-        lib = nixpkgs.lib;
-        sources = import ./nix/sources.nix { pkgs = legacyPackages; };
-        iohkNix = import sources.iohk-nix { inherit system; };
-        environments = iohkNix.cardanoLib.environments;
-        environmentName = "testnet";
-
-        eachEnv = lib.flip lib.pipe [
-          (lib.forEach (builtins.attrNames environments))
-          lib.listToAttrs
-        ];
-
-        config = env:
-          { pkgs, ... }: {
-            services.cardano-node = rec {
-              stateDir = "/persist";
-              socketPath = "/alloc/node.socket";
-              enable = true;
-              package = pkgs.cardano-node;
-              environment = env;
-              cardanoNodePkgs = pkgs;
-              hostAddr = "0.0.0.0";
-              port = 3001;
-            };
-          };
-
-        evaluated = env:
-          lib.nixosSystem {
-            inherit system;
-            pkgs = legacyPackages;
-            modules = [ ./nix/nixos/cardano-node-service.nix (config env) ];
-          };
-
-        packages = let
-          deps = with legacyPackages; [
-            coreutils
-            findutils
-            gnugrep
-            gnused
-            postgresql
-            strace
-            lsof
-            dnsutils
-            bashInteractive
-            iproute
-            curl
-            netcat
-            bat
-            tree
-          ];
-
-          vanilla = eachEnv (env:
-            lib.nameValuePair "cardano-node-${env}"
-            (legacyPackages.writeShellScriptBin "cardano-node-entrypoint" ''
-              ${(evaluated env).config.services.cardano-node.script}
-            ''));
-
-          debug = eachEnv (env:
-            let
-              entrypoint =
-                legacyPackages.writeShellScriptBin "cardano-node-entrypoint" ''
-                  ${(evaluated env).config.services.cardano-node.script}
-                '';
-
-              closure = legacyPackages.symlinkJoin {
-                name = "cardano-node-entrypoint";
-                paths = [ entrypoint ] ++ deps;
+        overlays = [ haskellNix.overlay
+          (final: prev: {
+            # This overlay adds the cardano-node project to pkgs
+            cardanoNodeProject =
+              final.haskell-nix.project' {
+                src = ./.;
+                compiler-nix-name = "ghc8104";
               };
-            in lib.nameValuePair "cardano-node-${env}-debug" closure);
-        in debug // vanilla;
-      in {
-        inherit iohkNix environments evaluated legacyPackages packages;
+          })
+        ];
+        pkgs = import nixpkgs { inherit system overlays; };
+        flake = pkgs.cardanoNodeProject.flake {};
+      in flake // {
+        # Built by `nix build .`
+        defaultPackage = flake.packages."cardano-node:exe:cardano-node";
 
-        apps = eachEnv (env:
-          lib.nameValuePair "cardano-node-${env}" (utils.lib.mkApp {
-            drv = packages."cardano-node-${env}";
-            exePath = "/bin/cardano-node-entrypoint";
-          }));
-        })) // {
-          overlay = import ./overlay.nix self;
-          nixosModules = {
-            cardano-node = { imports = [ ./nix/nixos/cardano-node-service.nix ]; };
+        # This is used by `nix develop .` to open a devShell
+        devShell = pkgs.cardanoNodeProject.shellFor {
+          tools = {
+            cabal = "latest";
+            hlint = "latest";
+            haskell-language-server = "latest";
           };
         };
+      }
+    );
 }
