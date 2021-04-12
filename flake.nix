@@ -12,7 +12,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, utils, haskellNix, iohkNix }:
+  outputs = { self, nixpkgs, utils, haskellNix, iohkNix, ... }:
     utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ] (system:
       let
         overlays = [ haskellNix.overlay
@@ -38,6 +38,15 @@
             hlint = "latest";
             haskell-language-server = "latest";
           };
+        };
+
+        apps.repl = utils.lib.mkApp {
+          drv = pkgs.writeShellScriptBin "repl" ''
+            confnix=$(mktemp)
+            echo "builtins.getFlake (toString $(git rev-parse --show-toplevel))" >$confnix
+            trap "rm $confnix" EXIT
+            nix repl $confnix
+          '';
         };
       }
     );
