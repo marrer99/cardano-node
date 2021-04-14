@@ -9,6 +9,7 @@ packages:
     cardano-node
     cardano-node-chairman
     cardano-submit-api
+    cardano-tx-generator
     nix/supervisord-cluster/topology
 
 package cardano-api
@@ -24,6 +25,9 @@ package cardano-node
   ghc-options: -Werror
 
 package cardano-node-chairman
+  ghc-options: -Werror
+
+package cardano-tx-generator
   ghc-options: -Werror
 
 package cryptonite
