@@ -55,7 +55,6 @@ import qualified Ouroboros.Consensus.Cardano.Block as Consensus
 import qualified Ouroboros.Consensus.Shelley.Ledger as Consensus
 import           Ouroboros.Network.Block (Serialised)
 
-import           Cardano.Binary ()
 import qualified Cardano.Chain.Update.Validation.Interface as Byron.Update
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as Ledger

@@ -132,7 +132,7 @@ module Cardano.Api (
     BlockHeader(..),
 
     -- ** Points on the chain
-    ChainPoint,
+    ChainPoint(..),
     EpochNo(..),
 
     -- ** Tip of the chain
@@ -398,6 +398,17 @@ module Cardano.Api (
     -- ** Queries
     -- ** Submitting transactions
 
+    -- ** High level protocol interaction with a Cardano node
+    -- *** Initialization / Accumulation
+    Env(..),
+    envSecurityParam,
+    LedgerState(..),
+    initialLedgerState,
+    applyBlock,
+
+    -- *** Traversing the block chain
+    foldBlocks,
+
     -- ** Low level protocol interaction with a Cardano node
     connectToLocalNode,
     LocalNodeConnectInfo(..),
@@ -492,6 +503,7 @@ import           Cardano.Api.Key
 import           Cardano.Api.KeysByron
 import           Cardano.Api.KeysPraos
 import           Cardano.Api.KeysShelley
+import           Cardano.Api.LedgerState
 import           Cardano.Api.Modes
 import           Cardano.Api.NetworkId
 import           Cardano.Api.OperationalCertificate
