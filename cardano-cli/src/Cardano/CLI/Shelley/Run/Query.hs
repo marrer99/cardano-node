@@ -48,7 +48,6 @@ import           Cardano.Binary (decodeFull)
 import           Cardano.Crypto.Hash (hashToBytesAsHex)
 
 import qualified Cardano.Ledger.Crypto as Crypto
-import qualified Cardano.Ledger.Shelley.Constraints as Ledger
 import           Ouroboros.Consensus.Cardano.Block as Consensus (EraMismatch (..))
 import           Ouroboros.Consensus.Shelley.Protocol (StandardCrypto)
 import           Ouroboros.Network.Block (Serialised (..))
@@ -98,8 +97,6 @@ runQueryCmd cmd =
       runQueryStakeDistribution consensusModeParams network mOutFile
     QueryStakeAddressInfo consensusModeParams addr network mOutFile ->
       runQueryStakeAddressInfo consensusModeParams addr network mOutFile
-    QueryLedgerState' consensusModeParams network mOutFile ->
-      runQueryLedgerState consensusModeParams network mOutFile
     QueryProtocolState' consensusModeParams network mOutFile ->
       runQueryProtocolState consensusModeParams network mOutFile
     QueryUTxO' consensusModeParams qFilter networkId mOutFile ->
@@ -235,34 +232,6 @@ runQueryUTxO (AnyConsensusModeParams cModeParams)
   maybeFiltered NoFilter = Nothing
 
 
-runQueryLedgerState
-  :: AnyConsensusModeParams
-  -> NetworkId
-  -> Maybe OutputFile
-  -> ExceptT ShelleyQueryCmdError IO ()
-runQueryLedgerState (AnyConsensusModeParams cModeParams)
-                    network mOutFile = do
-  SocketPath sockPath <- firstExceptT ShelleyQueryCmdEnvVarSocketErr readEnvSocketPath
-  let localNodeConnInfo = LocalNodeConnectInfo cModeParams network sockPath
-
-  anyE@(AnyCardanoEra era) <- determineEra cModeParams localNodeConnInfo
-  let cMode = consensusModeOnly cModeParams
-  sbe <- getSbe $ cardanoEraStyle era
-
-  case toEraInMode era cMode of
-    Just eInMode -> do
-      let qInMode = QueryInEra eInMode
-                      . QueryInShelleyBasedEra sbe
-                      $ QueryLedgerState
-      result <- executeQuery
-                  era
-                  cModeParams
-                  localNodeConnInfo
-                  qInMode
-      obtainLedgerEraClassConstraints sbe (writeLedgerState mOutFile) result
-    Nothing -> left $ ShelleyQueryCmdEraConsensusModeMismatch (AnyConsensusMode cMode) anyE
-
-
 runQueryProtocolState
   :: AnyConsensusModeParams
   -> NetworkId
@@ -359,28 +328,6 @@ writeStakeAddressInfo mOutFile delegsAndRewards =
     Just (OutputFile fpath) ->
       handleIOExceptT (ShelleyQueryCmdWriteFileError . FileIOError fpath)
         $ LBS.writeFile fpath (encodePretty delegsAndRewards)
-
-writeLedgerState :: forall era ledgerera.
-                    ShelleyLedgerEra era ~ ledgerera
-                 => ToJSON (LedgerState era)
-                 => FromCBOR (LedgerState era)
-                 => Maybe OutputFile
-                 -> SerialisedLedgerState era
-                 -> ExceptT ShelleyQueryCmdError IO ()
-writeLedgerState mOutFile qState@(SerialisedLedgerState serLedgerState) =
-  case mOutFile of
-    Nothing -> case decodeLedgerState qState of
-                 Left bs -> firstExceptT ShelleyQueryCmdHelpersError $ pPrintCBOR bs
-                 Right ledgerState -> liftIO . LBS.putStrLn $ encodePretty ledgerState
-    Just (OutputFile fpath) ->
-      handleIOExceptT (ShelleyQueryCmdWriteFileError . FileIOError fpath)
-        $ LBS.writeFile fpath $ unSerialised serLedgerState
- where
-   decodeLedgerState
-     :: SerialisedLedgerState era
-     -> Either LBS.ByteString (LedgerState era)
-   decodeLedgerState (SerialisedLedgerState (Serialised ls)) =
-     first (const ls) (decodeFull ls)
 
 
 writeProtocolState :: Crypto.Crypto StandardCrypto
@@ -622,15 +569,3 @@ queryResult eAcq =
       case eResult of
         Left err -> left . ShelleyQueryCmdLocalStateQueryError $ EraMismatchError err
         Right result -> return result
-
-obtainLedgerEraClassConstraints
-  :: ShelleyLedgerEra era ~ ledgerera
-  => ShelleyBasedEra era
-  -> ((Ledger.ShelleyBased ledgerera
-      , ToJSON (LedgerState era)
-      , FromCBOR (LedgerState era)
-      ) => a) -> a
-obtainLedgerEraClassConstraints ShelleyBasedEraShelley f = f
-obtainLedgerEraClassConstraints ShelleyBasedEraAllegra f = f
-obtainLedgerEraClassConstraints ShelleyBasedEraMary    f = f
-

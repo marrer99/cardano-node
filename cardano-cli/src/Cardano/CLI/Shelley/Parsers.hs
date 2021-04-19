@@ -680,8 +680,6 @@ pQueryCmd =
     , subParser "utxo"
         (Opt.info pQueryUTxO $ Opt.progDesc "Get the node's current UTxO with the option of \
                                             \filtering by address(es)")
-    , subParser "ledger-state"
-        (Opt.info pQueryLedgerState $ Opt.progDesc "Dump the current ledger state of the node (Ledger.NewEpochState -- advanced command)")
     , subParser "protocol-state"
         (Opt.info pQueryProtocolState $ Opt.progDesc "Dump the current protocol state of the node (Ledger.ChainDepState -- advanced command)")
     ]
@@ -721,12 +719,6 @@ pQueryCmd =
         <*> pFilterByStakeAddress
         <*> pNetworkId
         <*> pMaybeOutputFile
-
-    pQueryLedgerState :: Parser QueryCmd
-    pQueryLedgerState = QueryLedgerState'
-                          <$> pConsensusModeParams
-                          <*> pNetworkId
-                          <*> pMaybeOutputFile
 
     pQueryProtocolState :: Parser QueryCmd
     pQueryProtocolState = QueryProtocolState'

@@ -29,13 +29,10 @@ module Cardano.Api.Query (
     fromConsensusQueryResult,
 
     -- * Wrapper types used in queries
-    SerialisedLedgerState(..),
     ProtocolState(..),
-
-    LedgerState(..),
   ) where
 
-import           Data.Aeson (ToJSON (..), object, (.=))
+import           Data.Aeson (ToJSON (..))
 import           Data.Bifunctor (bimap)
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -43,7 +40,6 @@ import           Data.Maybe (mapMaybe)
 import           Data.SOP.Strict (SListI)
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Typeable
 import           Prelude
 
 import           Ouroboros.Network.Protocol.LocalStateQuery.Client (Some (..))
@@ -59,7 +55,7 @@ import qualified Ouroboros.Consensus.Cardano.Block as Consensus
 import qualified Ouroboros.Consensus.Shelley.Ledger as Consensus
 import           Ouroboros.Network.Block (Serialised)
 
-import           Cardano.Binary
+import           Cardano.Binary ()
 import qualified Cardano.Chain.Update.Validation.Interface as Byron.Update
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as Ledger
@@ -148,9 +144,6 @@ data QueryInShelleyBasedEra era result where
      -- QueryPoolRanking
      --   :: QueryInShelleyBasedEra era RewardProvenance
 
-     QueryLedgerState
-       :: QueryInShelleyBasedEra era (SerialisedLedgerState era)
-
      QueryProtocolState
        :: QueryInShelleyBasedEra era (ProtocolState era)
 
@@ -169,30 +162,6 @@ newtype UTxO era = UTxO (Map TxIn (TxOut era))
 
 instance IsCardanoEra era => ToJSON (UTxO era) where
   toJSON (UTxO m) = toJSON m
-
-newtype SerialisedLedgerState era
-  = SerialisedLedgerState (Serialised (Shelley.NewEpochState (ShelleyLedgerEra era)))
-
-data LedgerState era where
-  LedgerState :: ShelleyLedgerEra era ~ ledgerera => Shelley.NewEpochState ledgerera -> LedgerState era
-
-instance (Typeable era, Shelley.TransLedgerState FromCBOR (ShelleyLedgerEra era)) => FromCBOR (LedgerState era) where
-  fromCBOR = LedgerState <$> (fromCBOR :: Decoder s (Shelley.NewEpochState (ShelleyLedgerEra era)))
-
--- TODO: Shelley based era class!
-instance ( IsShelleyBasedEra era
-         , ShelleyLedgerEra era ~ ledgerera
-         , Consensus.ShelleyBasedEra ledgerera
-         , ToJSON (Core.PParams ledgerera)
-         , ToJSON (Shelley.PParamsDelta ledgerera)
-         , ToJSON (Core.TxOut ledgerera)) => ToJSON (LedgerState era) where
-  toJSON (LedgerState newEpochS) = object [ "lastEpoch" .= Shelley.nesEL newEpochS
-                                          , "blocksBefore" .= Shelley.nesBprev newEpochS
-                                          , "blocksCurrent" .= Shelley.nesBcur newEpochS
-                                          , "stateBefore" .= Shelley.nesEs newEpochS
-                                          , "possibleRewardUpdate" .= Shelley.nesRu newEpochS
-                                          , "stakeDistrib" .= Shelley.nesPd newEpochS
-                                          ]
 
 newtype ProtocolState era
   = ProtocolState (Serialised (Shelley.ChainDepState (Ledger.Crypto (ShelleyLedgerEra era))))
@@ -328,9 +297,6 @@ toConsensusQueryShelleyBased erainmode (QueryStakeAddresses creds _nId) =
   where
     creds' :: Set (Shelley.Credential Shelley.Staking StandardCrypto)
     creds' = Set.map toShelleyStakeCredential creds
-
-toConsensusQueryShelleyBased erainmode QueryLedgerState =
-    Some (consensusQueryInEraInMode erainmode (Consensus.GetCBOR Consensus.DebugNewEpochState))
 
 toConsensusQueryShelleyBased erainmode QueryProtocolState =
     Some (consensusQueryInEraInMode erainmode (Consensus.GetCBOR Consensus.DebugChainDepState))
@@ -485,11 +451,6 @@ fromConsensusQueryResultShelleyBased _ (QueryStakeAddresses _ nId) q' r' =
               , Map.mapKeys (makeStakeAddress nId) $ fromShelleyDelegations delegs
               )
       _ -> fromConsensusQueryResultMismatch
-
-fromConsensusQueryResultShelleyBased _ QueryLedgerState{} q' r' =
-    case q' of
-      Consensus.GetCBOR Consensus.DebugNewEpochState -> SerialisedLedgerState r'
-      _                                              -> fromConsensusQueryResultMismatch
 
 fromConsensusQueryResultShelleyBased _ QueryProtocolState q' r' =
     case q' of
