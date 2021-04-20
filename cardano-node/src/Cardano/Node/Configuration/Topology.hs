@@ -4,16 +4,19 @@
 module Cardano.Node.Configuration.Topology
   ( TopologyError(..)
   , NetworkTopology(..)
+  , PublicRootPeers(..)
+  , LocalRootPeersGroups(..)
+  , LocalRootPeers(..)
+  , RootAddress(..)
   , NodeHostIPAddress(..)
   , NodeHostIPv4Address(..)
   , NodeHostIPv6Address(..)
   , NodeSetup(..)
-  , RemoteAddress(..)
   , PeerAdvertise(..)
   , UseLedger(..)
   , nodeAddressToSockAddr
   , readTopologyFile
-  , remoteAddressToNodeAddress
+  , rootAddressToRelayAddress
   )
 where
 
@@ -31,62 +34,12 @@ import           Cardano.Slotting.Slot (SlotNo (..))
 import           Cardano.Node.Types
 
 import           Ouroboros.Network.NodeToNode (PeerAdvertise (..))
-import           Ouroboros.Network.PeerSelection.LedgerPeers (UseLedgerAfter (..))
-import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Network.PeerSelection.LedgerPeers (UseLedgerAfter (..), RelayAddress (..))
 
 
 newtype TopologyError
   = NodeIdNotFoundInToplogyFile FilePath
   deriving Show
-
--- | Domain name with port number
---
-data RemoteAddress = RemoteAddress
-  { raAddress   :: !Text
-  -- ^ Either a dns address or an ip address.
-  , raPort      :: !PortNumber
-  -- ^ Port number of the destination.
-  , raAdvertise :: !PeerAdvertise
-  -- ^ Advertise the peer through gossip protocol.
-  -- ^ If a DNS address is given valency governs
-  } deriving (Eq, Show)
-
-
--- | Parse 'raAddress' field as an IP address; if it parses and the valency is
--- non zero return corresponding NodeAddress.
---
-remoteAddressToNodeAddress
-  :: RemoteAddress
-  -> Either (NodeIPAddress,  PeerAdvertise)
-            (NodeDnsAddress, PeerAdvertise)
-remoteAddressToNodeAddress RemoteAddress { raAddress, raPort, raAdvertise } =
-    case readMaybe (Text.unpack raAddress) of
-      Nothing   -> Right ( NodeAddress (NodeHostDnsAddress raAddress) raPort
-                         , raAdvertise )
-      Just addr -> Left  ( NodeAddress (NodeHostIPAddress addr) raPort
-                         , raAdvertise )
-
-
-instance Condense RemoteAddress where
-  condense (RemoteAddress addr port val) =
-    Text.unpack addr ++ ":" ++ show port ++ " (" ++ show val ++ ")"
-
-instance FromJSON RemoteAddress where
-  parseJSON = withObject "RemoteAddress" $ \v ->
-    RemoteAddress
-      <$> v .: "addr"
-      <*> ((fromIntegral :: Int -> PortNumber) <$> v .: "port")
-      <*> (bool DoNotAdvertisePeer DoAdvertisePeer <$> v .: "advertise")
-
-instance ToJSON RemoteAddress where
-  toJSON ra =
-    object
-      [ "addr" .= raAddress ra
-      , "port" .= (fromIntegral (raPort ra) :: Int)
-      , "advertise" .= case raAdvertise ra of
-                          DoNotAdvertisePeer -> False
-                          DoAdvertisePeer    -> True
-      ]
 
 newtype UseLedger = UseLedger UseLedgerAfter deriving (Eq, Show)
 
@@ -104,7 +57,7 @@ data NodeSetup = NodeSetup
   { nodeId :: !Word64
   , nodeIPv4Address :: !(Maybe NodeIPv4Address)
   , nodeIPv6Address :: !(Maybe NodeIPv6Address)
-  , producers :: ![RemoteAddress]
+  , producers :: ![RootAddress]
   , useLedger :: !UseLedger
   } deriving (Eq, Show)
 
@@ -127,24 +80,97 @@ instance ToJSON NodeSetup where
       , "useLedgerAfterSlot" .= useLedger ns
       ]
 
-data NetworkTopology = MockNodeTopology ![NodeSetup]
-                     | RealNodeTopology ![RemoteAddress] !UseLedger
+data RootAddress = RootAddress
+  { addrs :: [RelayAddress]
+  , advertise :: PeerAdvertise
+  } deriving (Eq, Show)
+
+instance FromJSON RootAddress where
+  parseJSON = withObject "RootAddress" $ \o ->
+                RootAddress
+                  <$> o .: "addrs"
+                  <*> o .: "advertise"
+
+instance ToJSON RootAddress where
+  toJSON ra =
+    object
+      [ "addrs" .= addrs ra
+      , "advertise" .= advertise ra
+      ]
+
+-- | Transforms a 'RootAddress' into a pair of 'RelayAddress' and its
+-- corresponding 'PeerAdvertise' value.
+--
+rootAddressToRelayAddress
+  :: RootAddress
+  -> [(RelayAddress, PeerAdvertise)]
+rootAddressToRelayAddress RootAddress { addrs, advertise } =
+    [ (ra, advertise) | ra <- addrs ]
+
+data LocalRootPeers = LocalRootPeers
+  { localRoots :: RootAddress
+  , valency :: Int
+  } deriving (Eq, Show)
+
+instance FromJSON LocalRootPeers where
+  parseJSON = withObject "LocalRootPeers" $ \o ->
+                LocalRootPeers
+                  <$> o .: "localRoots"
+                  <*> o .: "valency"
+
+instance ToJSON LocalRootPeers where
+  toJSON lrpg =
+    object
+      [ "localRoots" .= localRoots lrpg
+      , "valency" .= valency lrpg
+      ]
+
+newtype LocalRootPeersGroups = LocalRootPeersGroups
+  { groups :: [LocalRootPeers]
+  } deriving (Eq, Show)
+
+instance FromJSON LocalRootPeersGroups where
+  parseJSON = withObject "LocalRootPeersGroups" $ \o ->
+                LocalRootPeersGroups
+                  <$> o .: "groups"
+
+instance ToJSON LocalRootPeersGroups where
+  toJSON lrpg =
+    object
+      [ "groups" .= groups lrpg
+      ]
+
+newtype PublicRootPeers = PublicRootPeers
+  { publicRoots :: RootAddress
+  } deriving (Eq, Show)
+
+instance FromJSON PublicRootPeers where
+  parseJSON = withObject "PublicRootPeers" $ \o ->
+                PublicRootPeers
+                  <$> o .: "publicRoots"
+
+instance ToJSON PublicRootPeers where
+  toJSON prp =
+    object
+      [ "publicRoots" .= publicRoots prp
+      ]
+
+data NetworkTopology = RealNodeTopology !LocalRootPeersGroups ![PublicRootPeers] !UseLedger
   deriving (Eq, Show)
 
 instance FromJSON NetworkTopology where
-  parseJSON = withObject "NetworkTopology" $ \o -> asum
-                [ MockNodeTopology <$> o .: "MockProducers"
-                , RealNodeTopology <$> o .: "Producers"
-                                   <*> (o .:? "useLedgerAfterSlot" .!= (UseLedger DontUseLedger))
-                ]
+  parseJSON = withObject "NetworkTopology" $ \o ->
+                RealNodeTopology <$> o .: "LocalProducers"
+                                 <*> o .: "PublicProducers"
+                                 <*> (o .:? "useLedgerAfterSlot" .!= (UseLedger DontUseLedger))
 
 instance ToJSON NetworkTopology where
   toJSON top =
     case top of
-      MockNodeTopology nss -> object [ "MockProducers" .= toJSON nss ]
-      RealNodeTopology ras ul -> object [ "Producers" .= toJSON ras
-                                        ,  "useLedgerAfterSlot" .= toJSON ul
-                                        ]
+      RealNodeTopology lrpg prp ul -> object [ "LocalProducers" .= lrpg
+                                             , "PublicProducers" .= prp
+                                             , "useLedgerAfterSlot" .= ul
+                                             ]
 
 -- | Read the `NetworkTopology` configuration from the specified file.
 -- While running a real protocol, this gives your node its own address and
