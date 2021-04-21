@@ -29,6 +29,7 @@ import           Cardano.Benchmarking.Script.Action
 import           Cardano.Benchmarking.Script.Env
 import           Cardano.Benchmarking.Script.Setters
 import           Cardano.Benchmarking.Script.Store
+import           Cardano.Benchmarking.Types (TPSRate(..))
 
 testJSONRoundTrip :: [Action] -> Maybe String
 testJSONRoundTrip l = case fromJSON $ toJSON l of
@@ -52,7 +53,7 @@ instance FromJSON AnyCardanoEra where
     "Shelley" -> return $ AnyCardanoEra ShelleyEra
     "Allegra" -> return $ AnyCardanoEra AllegraEra
     "Mary"    -> return $ AnyCardanoEra MaryEra
-    era -> fail $ Text.unpack era
+    era -> parseFail ("Error: Cannot parse JSON value '" <> Text.unpack era <> "' to AnyCardanoEra.")
 
 instance ToJSON (DSum Tag Identity) where
   toEncoding = error "DSum Tag Identity"
@@ -78,12 +79,11 @@ actionToJSON a = case a of
     where names = [n | FundName n <- newFunds]
   SplitFundToList (FundListName fundList) (KeyName destKey) (FundName sourceFund)
     -> object ["splitFundToList" .= fundList, "newKey" .= destKey, "sourceFund" .= sourceFund ]
-  Delay -> singleton "delay" Null
+  Delay t -> object ["delay" .= t ]
   PrepareTxList (TxListName name) (KeyName key) (FundListName fund)
     -> object ["prepareTxList" .= name, "newKey" .= key, "fundList" .= fund ]
-  RunBenchmark (TxListName txs) -> singleton "runBenchmark" txs
-  AsyncBenchmark (ThreadName t) (TxListName txs)
-    -> object ["asyncBenchmark" .= t, "txList" .= txs]
+  AsyncBenchmark (ThreadName t) (TxListName txs) (TPSRate tps) 
+    -> object ["asyncBenchmark" .= t, "txList" .= txs, "tps" .= tps]
   WaitBenchmark (ThreadName t) ->  singleton "waitBenchmark" t
   CancelBenchmark (ThreadName t) ->  singleton "cancelBenchmark" t
   WaitForEra era -> singleton "waitForEra" era
@@ -116,25 +116,21 @@ objectToAction obj = case obj of
   (HashMap.lookup "secureGenesisFund" -> Just v) -> parseSecureGenesisFund v
   (HashMap.lookup "splitFund"         -> Just v) -> parseSplitFund v
   (HashMap.lookup "splitFundToList"   -> Just v) -> parseSplitFundToList v
-  (HashMap.lookup "delay"             -> Just v) -> case v of
-    Null -> return Delay
-    _ -> typeMismatch "Delay" v
+  (HashMap.lookup "delay"             -> Just v) -> Delay <$> parseJSON v
   (HashMap.lookup "prepareTxList"     -> Just v) -> parsePrepareTxList v
-  (HashMap.lookup "runBenchmark"      -> Just v)
-    -> (withText "Error parsing runBenchmark" $ \t -> return $ RunBenchmark $ TxListName $ Text.unpack t) v
   (HashMap.lookup "asyncBenchmark"    -> Just v) -> parseAsyncBenchmark v
   (HashMap.lookup "waitBenchmark"     -> Just v) -> WaitBenchmark <$> parseThreadName v
   (HashMap.lookup "cancelBenchmark"   -> Just v) -> CancelBenchmark <$> parseThreadName v
   (HashMap.lookup "waitForEra"        -> Just v) -> WaitForEra <$> parseJSON v
   (HashMap.lookup "reserved"          -> Just v) -> Reserved <$> parseJSON v
-  (HashMap.toList -> [(k, v) ]                 ) -> parseSetter k v
-  _ -> fail "Error: cannot parse action Object."
+  (HashMap.toList -> [(k, v)]                  ) -> parseSetter k v
+  _ -> parseFail "Error: cannot parse action Object."
  where
-  parseSetter t v = case t of
+  parseSetter k v = case k of
     (Text.stripPrefix "set" -> Just tag) -> do
         s <- parseJSON $ object [ "tag" .= ("S" <> tag), "contents" .= v]
         return $ Set $ sumToTaggged s
-    _ -> fail "Failed to parse Setter"
+    _ -> parseFail $ "Error: cannot parse action Object with key " <> Text.unpack k
 
   parseKey f = KeyName <$> parseField obj f
   parseFund f = FundName <$> parseField obj f
@@ -169,6 +165,7 @@ objectToAction obj = case obj of
   parseAsyncBenchmark v = AsyncBenchmark
     <$> ( ThreadName <$> parseJSON v )
     <*> ( TxListName <$> parseField obj "txList" )
+    <*> ( TPSRate <$> parseField obj "tps" )   
 
 parseScriptFile :: FilePath -> IO [Action]
 parseScriptFile filePath = do
