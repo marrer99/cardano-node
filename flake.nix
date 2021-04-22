@@ -11,6 +11,7 @@
 
   outputs = { self, nixpkgs, utils, haskellNix, iohkNix, ... }:
     let
+      inherit (haskellNix.internal) config;
       overlays = with iohkNix.overlays; [
         haskellNix.overlay
         haskell-nix-extra
@@ -22,11 +23,21 @@
         })
         (import ./nix/pkgs.nix)
       ];
-    in utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ] (system:
+    in utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
-        pkgs = import nixpkgs { inherit system overlays; };
+        pkgs = import nixpkgs { inherit system overlays config; };
+        inherit (pkgs.lib) systems mapAttrs' nameValuePair recursiveUpdate;
+        windowsPkgs = import nixpkgs { inherit system overlays config;
+          crossSystem = systems.examples.mingwW64;
+        };
         flake = pkgs.cardanoNodeProject.flake {};
-      in with pkgs; flake // {
+        windowsFlake = windowsPkgs.cardanoNodeProject.flake {};
+        prefixNamesWith = p: mapAttrs' (n: v: nameValuePair "${p}${n}" v);
+      in recursiveUpdate flake {
+
+        packages = prefixNamesWith "windows:" windowsFlake.packages;
+        checks = prefixNamesWith "windows:" windowsFlake.checks;
+
         # Built by `nix build .`
         defaultPackage = flake.packages."cardano-node:exe:cardano-node";
 
@@ -34,7 +45,7 @@
         devShell = import ./shell.nix { inherit pkgs; };
 
         apps.repl = utils.lib.mkApp {
-          drv = writeShellScriptBin "repl" ''
+          drv = pkgs.writeShellScriptBin "repl" ''
             confnix=$(mktemp)
             echo "builtins.getFlake (toString $(git rev-parse --show-toplevel))" >$confnix
             trap "rm $confnix" EXIT
